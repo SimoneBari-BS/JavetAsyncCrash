@@ -9,21 +9,10 @@ import com.caoccao.javet.values.V8Value
 import com.caoccao.javet.values.primitive.V8ValueString
 import com.caoccao.javet.values.reference.V8ValueArray
 import com.caoccao.javet.values.reference.V8ValueObject
-import com.caoccao.javet.values.reference.V8ValueSet
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.newSingleThreadContext
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
-
 import org.junit.Test
 import org.junit.runner.RunWith
-
-import org.junit.Assert.*
 import java.lang.reflect.Method
-import kotlin.coroutines.CoroutineContext
+import kotlin.concurrent.thread
 
 /**
  * Instrumented test, which will execute on an Android device.
@@ -33,14 +22,12 @@ import kotlin.coroutines.CoroutineContext
 @RunWith(AndroidJUnit4::class)
 class JavetCrashTest {
 
-    private val context = newSingleThreadContext("js-context")
-
     @Test
-    fun crashJavet() = runBlocking(context) {
+    fun crashJavet() {
         val runtime: V8Runtime = V8Host.getV8Instance().createV8Runtime()
         val context = runtime.createV8ValueObject().apply {
-            val callbackObject = AsyncMethodWrapper(context, runtime) {
-//                withContext(Dispatchers.IO) { // Decomment this and the closing brace to crash
+            val callbackObject = AsyncMethodWrapper(runtime) {
+                thread {
                     it.get<V8ValueObject>("simple").use { simpleClass ->
                         check(simpleClass.get<V8ValueString>("string").value == "Hello")
                     }
@@ -51,7 +38,7 @@ class JavetCrashTest {
                             }
                         }
                     }
-//                }
+                }.join()
                 runtime.createV8ValueString("Hello world!")
             }
             val receiver = JavetCallbackContext(callbackObject, callbackObject.invokeMethod)
@@ -78,7 +65,7 @@ class JavetCrashTest {
 
         repeat(100000) {
             runtime.globalObject.invoke<V8Value>("main", context).use {
-                delay(1)
+                Thread.sleep(1)
             }
         }
     }
@@ -86,9 +73,8 @@ class JavetCrashTest {
 
 
 private class AsyncMethodWrapper(
-    private val context: CoroutineContext,
     private val runtime: V8Runtime,
-    private val block: suspend (V8ValueObject) -> V8Value,
+    private val block: (V8ValueObject) -> V8Value,
 ) {
     @Keep
     @SuppressWarnings("TooGenericExceptionCaught")
@@ -96,7 +82,7 @@ private class AsyncMethodWrapper(
         val promise = runtime.createV8ValuePromise()
         val jsPromise = promise.promise
         val clonedParam = parameter.toClone<V8ValueObject>()
-        GlobalScope.launch(context) {
+        thread {
             promise.use {
                 val value = clonedParam.use { crisperParam ->
                     block(crisperParam)
